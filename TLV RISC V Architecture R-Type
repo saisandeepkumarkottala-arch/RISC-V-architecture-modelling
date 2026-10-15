@@ -1,0 +1,104 @@
+\m4_TLV_version 1d: tl-x.org
+\m5
+
+\SV
+   m4_include_lib(['https://raw.githubusercontent.com/stevehoover/LF-Building-a-RISC-V-CPU-Core/main/lib/risc-v_shell_lib.tlv'])
+
+   // R-type test program
+   m4_asm(ADD,  x14, x13, x13)
+   m4_asm(SUB,  x14, x13, x13)
+   m4_asm(SLL,  x14, x13, x13)
+   m4_asm(SLT,  x14, x13, x13)
+   m4_asm(SLTU, x14, x13, x13)
+   m4_asm(XOR,  x14, x13, x13)
+   m4_asm(SRL,  x14, x13, x13)
+   m4_asm(SRA,  x14, x13, x13)
+   m4_asm(OR,   x14, x13, x13)
+   m4_asm(AND,  x14, x13, x13)
+   m4_asm_end()
+
+   m4_define(['M4_MAX_CYC'], 50)
+   m4_makerchip_module
+
+\TLV
+
+   // Reset
+   $reset = *reset;
+
+   // Program Counter
+   $pc[31:0] = $reset ? 32'b0 : >>1$next_pc;
+   $next_pc[31:0] = $pc + 32'd4;
+
+   // Instruction Memory
+   `READONLY_MEM($pc, $$instr[31:0])
+
+   // Instruction fields
+   $opcode[6:0] = $instr[6:0];
+   $rd[4:0]     = $instr[11:7];
+   $funct3[2:0] = $instr[14:12];
+   $rs1[4:0]    = $instr[19:15];
+   $rs2[4:0]    = $instr[24:20];
+   $funct7[6:0] = $instr[31:25];
+
+   // R-type detection
+   $is_r_type = ($opcode == 7'b0110011);
+
+   // Instruction decoder
+   $is_add  = $is_r_type && ($funct3 == 3'b000) && ($funct7 == 7'b0000000);
+   $is_sub  = $is_r_type && ($funct3 == 3'b000) && ($funct7 == 7'b0100000);
+   $is_sll  = $is_r_type && ($funct3 == 3'b001) && ($funct7 == 7'b0000000);
+   $is_slt  = $is_r_type && ($funct3 == 3'b010) && ($funct7 == 7'b0000000);
+   $is_sltu = $is_r_type && ($funct3 == 3'b011) && ($funct7 == 7'b0000000);
+   $is_xor  = $is_r_type && ($funct3 == 3'b100) && ($funct7 == 7'b0000000);
+   $is_srl  = $is_r_type && ($funct3 == 3'b101) && ($funct7 == 7'b0000000);
+   $is_sra  = $is_r_type && ($funct3 == 3'b101) && ($funct7 == 7'b0100000);
+   $is_or   = $is_r_type && ($funct3 == 3'b110) && ($funct7 == 7'b0000000);
+   $is_and  = $is_r_type && ($funct3 == 3'b111) && ($funct7 == 7'b0000000);
+
+   // Register File read enable
+   $rf_rd_en1 = 1'b1;
+   $rf_rd_en2 = 1'b1;
+
+   // Register File write
+   $rf_wr_en = $is_r_type && ($rd != 5'd0);
+   $rf_wr_index[4:0] = $rd;
+   $rf_wr_data[31:0] = $result;
+
+   //Register File Instantiation Block
+   m4+rf(32, 32, $reset,
+         $rf_wr_en, $rf_wr_index, $rf_wr_data,
+         $rf_rd_en1, $rs1, $src1_value,
+         $rf_rd_en2, $rs2, $src2_value)
+
+   // Signed less-than comparison
+   $slt_result =
+      ($src1_value[31] != $src2_value[31]) ?
+      $src1_value[31] :
+      ($src1_value < $src2_value);
+
+   // Arithmetic right shift
+   $sra_result[31:0] =
+      $src1_value[31] ?
+      (($src1_value >> $src2_value[4:0]) |
+       ~(32'hFFFFFFFF >> $src2_value[4:0])) :
+      ($src1_value >> $src2_value[4:0]);
+
+   // ALU
+   $result[31:0] =
+      $is_add  ? ($src1_value + $src2_value) :
+      $is_sub  ? ($src1_value - $src2_value) :
+      $is_sll  ? ($src1_value << $src2_value[4:0]) :
+      $is_slt  ? {31'b0, $slt_result} :
+      $is_sltu ? (($src1_value < $src2_value) ? 32'd1 : 32'd0) :
+      $is_xor  ? ($src1_value ^ $src2_value) :
+      $is_srl  ? ($src1_value >> $src2_value[4:0]) :
+      $is_sra  ? $sra_result :
+      $is_or   ? ($src1_value | $src2_value) :
+      $is_and  ? ($src1_value & $src2_value) :
+                 32'b0;
+
+   m4+cpu_viz()
+
+\SV
+
+endmodule
